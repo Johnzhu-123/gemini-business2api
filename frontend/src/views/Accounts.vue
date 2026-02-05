@@ -26,30 +26,6 @@
       </div>
     </Teleport>
 
-    <Teleport to="body">
-      <div
-        v-if="isMigrationNoticeOpen"
-        class="fixed inset-0 z-[210] flex items-center justify-center bg-background/90 backdrop-blur-sm"
-      >
-        <div class="max-w-lg rounded-2xl border border-border bg-card p-8 shadow-xl">
-          <h2 class="text-lg font-semibold text-foreground">数据迁移提示</h2>
-          <p class="mt-3 text-sm text-muted-foreground">
-            {{ migrationMessage || '已完成账户数据迁移到数据库。' }}
-          </p>
-          <div class="mt-6 flex justify-end">
-            <button
-              type="button"
-              class="rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors
-                     hover:border-primary hover:text-primary"
-              @click="isMigrationNoticeOpen = false"
-            >
-              我知道了
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
     <section class="rounded-3xl border border-border bg-card p-6">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div class="grid w-full grid-cols-2 gap-3 sm:flex sm:w-auto sm:items-center">
@@ -118,18 +94,29 @@
         <button
           class="rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors
                  hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="isRegistering"
+          :disabled="isRegistering || isRefreshing"
           @click="openRegisterModal"
         >
           添加账户
         </button>
 
         <button
-          class="rounded-full border border-border px-4 py-2 text-sm font-medium transition-colors
+          class="relative rounded-full border border-border px-4 py-2 text-sm font-medium transition-colors
                  hover:border-primary hover:text-primary"
           @click="openTaskModal"
         >
-          任务管理
+          <span class="flex items-center gap-2">
+            任务管理
+            <template v-if="isTaskRunning">
+              <span class="flex items-center gap-1.5 text-xs text-sky-500">
+                <span class="relative flex h-2 w-2">
+                  <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-500 opacity-75"></span>
+                  <span class="relative inline-flex h-2 w-2 rounded-full bg-sky-500"></span>
+                </span>
+                {{ taskProgressText }}
+              </span>
+            </template>
+          </span>
         </button>
 
         <div ref="moreActionsRef" class="relative">
@@ -168,10 +155,10 @@
             <button
               type="button"
               class="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition-colors"
-              :class="isRefreshing
+              :class="isRegistering
                 ? 'cursor-not-allowed text-muted-foreground'
                 : 'text-foreground hover:bg-accent'"
-              :disabled="isRefreshing"
+              :disabled="isRegistering"
               @click="handleRefreshExpiring(); closeMoreActions()"
             >
               刷新过期
@@ -179,10 +166,10 @@
             <button
               type="button"
               class="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition-colors"
-              :class="!selectedCount || isRefreshing
+              :class="!selectedCount || isRegistering
                 ? 'cursor-not-allowed text-muted-foreground'
                 : 'text-foreground hover:bg-accent'"
-              :disabled="!selectedCount || isRefreshing"
+              :disabled="!selectedCount || isRegistering"
               @click="handleRefreshSelected(); closeMoreActions()"
             >
               刷新选中
@@ -296,21 +283,30 @@
             </div>
             <div>
               <p>冷却</p>
-              <p class="mt-1" :class="cooldownClass(account)">
-                <span v-if="account.cooldown_seconds > 0">
-                  {{ formatCooldown(account.cooldown_seconds) }} · {{ account.cooldown_reason }}
-                </span>
-                <span v-else>
-                  {{ account.cooldown_reason || '无冷却' }}
-                </span>
+              <p class="mt-1 flex items-center gap-1" :class="cooldownClass(account)">
+                <template v-if="cooldownDisplay(account) === 'normal'">
+                  <svg class="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                  </svg>
+                  <span>正常</span>
+                </template>
+                <template v-else-if="cooldownDisplay(account) === 'disabled'">
+                  <svg class="h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clip-rule="evenodd" />
+                  </svg>
+                  <span>手动禁用</span>
+                </template>
+                <template v-else>
+                  {{ cooldownDisplay(account) }}
+                </template>
               </p>
             </div>
             <div>
               <p>失败数</p>
-              <p class="mt-1 text-sm font-semibold text-foreground">{{ account.error_count }}</p>
+              <p class="mt-1 text-sm font-semibold text-foreground">{{ account.failure_count }}</p>
             </div>
             <div>
-              <p>会话数</p>
+              <p>成功数</p>
               <p class="mt-1 text-sm font-semibold text-foreground">{{ account.conversation_count }}</p>
             </div>
           </div>
@@ -374,7 +370,7 @@
               <th class="py-3 pr-6">配额</th>
               <th class="py-3 pr-6">冷却</th>
               <th class="py-3 pr-6">失败数</th>
-              <th class="py-3 pr-6">会话数</th>
+              <th class="py-3 pr-6">成功数</th>
               <th class="py-3 text-right">操作</th>
             </tr>
           </thead>
@@ -420,16 +416,27 @@
                 <QuotaBadge v-if="account.quota_status" :quota-status="account.quota_status" />
                 <span v-else class="text-xs text-muted-foreground">-</span>
               </td>
-              <td class="py-4 pr-6 text-xs">
-                <span v-if="account.cooldown_seconds > 0" :class="cooldownClass(account)">
-                  {{ formatCooldown(account.cooldown_seconds) }} · {{ account.cooldown_reason }}
-                </span>
-                <span v-else :class="cooldownClass(account)">
-                  {{ account.cooldown_reason || '无冷却' }}
+              <td class="py-4 pr-6 text-xs" :class="cooldownClass(account)">
+                <span class="flex items-center gap-1">
+                  <template v-if="cooldownDisplay(account) === 'normal'">
+                    <svg class="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <span>正常</span>
+                  </template>
+                  <template v-else-if="cooldownDisplay(account) === 'disabled'">
+                    <svg class="h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clip-rule="evenodd" />
+                    </svg>
+                    <span>手动禁用</span>
+                  </template>
+                  <template v-else>
+                    {{ cooldownDisplay(account) }}
+                  </template>
                 </span>
               </td>
               <td class="py-4 pr-6 text-xs text-muted-foreground">
-                {{ account.error_count }}
+                {{ account.failure_count }}
               </td>
               <td class="py-4 pr-6 text-xs text-muted-foreground">
                 {{ account.conversation_count }}
@@ -587,7 +594,12 @@
           </div>
 
           <div class="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-relaxed">
-            <p class="text-xs font-bold text-rose-600">⚠️ 严禁滥用：禁止将本工具用于商业用途或任何形式的滥用（无论规模大小）</p>
+            <p class="flex items-center gap-1.5 text-xs font-bold text-rose-600">
+              <svg class="h-4 w-4 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+              </svg>
+              严禁滥用：禁止将本工具用于商业用途或任何形式的滥用（无论规模大小）
+            </p>
             <p class="mt-1 text-muted-foreground">详细声明请查看项目 <a href="https://github.com/Dreamy-rain/gemini-business2api/blob/main/docs/DISCLAIMER.md" target="_blank" class="text-primary hover:underline font-medium">DISCLAIMER.md</a></p>
           </div>
           <Checkbox v-model="registerAgreed">
@@ -889,7 +901,12 @@
         <!-- 历史记录 Tab -->
         <div v-if="activeTaskTab === 'history'" class="flex min-h-0 flex-1 flex-col">
           <div class="flex-1 overflow-y-auto px-6 py-4">
-            <div v-if="isLoadingHistory" class="py-8"></div>
+            <div v-if="isLoadingHistory" class="flex items-center justify-center py-8">
+              <svg class="h-6 w-6 animate-spin text-muted-foreground" viewBox="0 0 24 24" fill="none">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
             <div v-else-if="taskHistory.length === 0" class="rounded-2xl border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               <p class="font-medium text-foreground mb-2">暂无历史记录</p>
               <p>完成的任务将显示在这里</p>
@@ -1190,7 +1207,7 @@ import { mailProviderOptions, defaultMailProvider } from '@/constants/mailProvid
 import type { AdminAccount, AccountConfigItem, RegisterTask, LoginTask } from '@/types/api'
 
 const accountsStore = useAccountsStore()
-const { accounts, isLoading, isOperating, batchProgress, migrationNotice } = storeToRefs(accountsStore)
+const { accounts, isLoading, isOperating, batchProgress } = storeToRefs(accountsStore)
 const settingsStore = useSettingsStore()
 const { settings } = storeToRefs(settingsStore)
 const confirmDialog = useConfirmDialog()
@@ -1241,18 +1258,33 @@ const loginLogClearMarker = ref<TaskLogLine | null>(null)
 const registerAgreed = ref(false)
 const registerTask = ref<RegisterTask | null>(null)
 const loginTask = ref<LoginTask | null>(null)
+const refreshingAccountIds = ref<Set<string>>(new Set())  // 正在刷新的账户ID集合（仅用于显示状态）
 const taskLogsRef = ref<HTMLDivElement | null>(null)
 const isRegistering = ref(false)
 const isRefreshing = ref(false)
 const automationError = ref('')
-const isMigrationNoticeOpen = ref(false)
-const migrationMessage = ref('')
 const REGISTER_TASK_CACHE_KEY = 'accounts-register-task-cache'
 const LOGIN_TASK_CACHE_KEY = 'accounts-login-task-cache'
 const REGISTER_CLEAR_KEY = 'accounts-register-log-clear'
 const LOGIN_CLEAR_KEY = 'accounts-login-log-clear'
 const REGISTER_DISMISS_KEY = 'accounts-register-task-dismissed'
 const LOGIN_DISMISS_KEY = 'accounts-login-task-dismissed'
+const REGISTER_CLEARED_KEY = 'accounts-register-task-cleared'
+const LOGIN_CLEARED_KEY = 'accounts-login-task-cleared'
+
+type TaskKind = 'register' | 'login'
+const TASK_KEYS = {
+  register: {
+    clearKey: REGISTER_CLEAR_KEY,
+    dismissKey: REGISTER_DISMISS_KEY,
+    clearedKey: REGISTER_CLEARED_KEY,
+  },
+  login: {
+    clearKey: LOGIN_CLEAR_KEY,
+    dismissKey: LOGIN_DISMISS_KEY,
+    clearedKey: LOGIN_CLEARED_KEY,
+  },
+} as const
 const editForm = ref<AccountConfigItem>({
   id: '',
   secure_c_ses: '',
@@ -1269,7 +1301,6 @@ const statusOptions = [
   { label: '即将过期', value: '即将过期' },
   { label: '已过期', value: '已过期' },
   { label: '手动禁用', value: '手动禁用' },
-  { label: '错误禁用', value: '错误禁用' },
   { label: '429限流', value: '429限流' },
 ]
 
@@ -1301,11 +1332,6 @@ watch([searchQuery, statusFilter], () => {
 
 const refreshAccounts = async () => {
   await accountsStore.loadAccounts()
-  if (migrationNotice.value) {
-    migrationMessage.value = migrationNotice.value
-    isMigrationNoticeOpen.value = true
-    migrationNotice.value = null
-  }
   selectedIds.value = new Set()
   showMoreActions.value = false
 }
@@ -1335,23 +1361,164 @@ const removeCachedTask = (key: string) => {
   }
 }
 
-const readDismissedTaskId = (key: string) => {
+type DismissedTaskMeta = { id?: string; created_at?: number } | null
+
+const readDismissedTaskMeta = (key: string): DismissedTaskMeta => {
   try {
-    return localStorage.getItem(key)
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    try {
+      const parsed = JSON.parse(raw) as Partial<{ id: string; created_at: number }>
+      if (parsed && (parsed.id || typeof parsed.created_at === 'number')) {
+        return { id: parsed.id, created_at: parsed.created_at }
+      }
+    } catch {
+      // Backward compatibility: plain id string
+      return { id: raw }
+    }
+    return null
   } catch {
     return null
   }
 }
 
-const writeDismissedTaskId = (key: string, taskId: string | null) => {
+const writeDismissedTaskMeta = (key: string, meta: DismissedTaskMeta) => {
   try {
-    if (!taskId) {
+    if (!meta || (!meta.id && typeof meta.created_at !== 'number')) {
       localStorage.removeItem(key)
       return
     }
-    localStorage.setItem(key, taskId)
+    localStorage.setItem(key, JSON.stringify(meta))
   } catch {
     // ignore storage errors
+  }
+}
+
+const readDismissedTaskId = (key: string) => readDismissedTaskMeta(key)?.id || null
+
+const writeDismissedTaskId = (key: string, taskId: string | null) => {
+  if (!taskId) {
+    writeDismissedTaskMeta(key, null)
+    return
+  }
+  writeDismissedTaskMeta(key, { id: taskId })
+}
+
+const isTaskMetaMatch = (task: { id?: string; created_at?: number } | null | undefined, meta: DismissedTaskMeta) => {
+  if (!task || !meta) return false
+  if (meta.id && task.id && task.id === meta.id) return true
+  if (typeof meta.created_at === 'number' && typeof task.created_at === 'number' && task.created_at === meta.created_at) {
+    return true
+  }
+  return false
+}
+
+const isTaskDismissed = (task: { id?: string; created_at?: number } | null | undefined, meta: DismissedTaskMeta) =>
+  isTaskMetaMatch(task, meta)
+
+const readClearedTaskMeta = (key: string): DismissedTaskMeta => readDismissedTaskMeta(key)
+const writeClearedTaskMeta = (key: string, meta: DismissedTaskMeta) => writeDismissedTaskMeta(key, meta)
+
+const isTaskActive = (task: RegisterTask | LoginTask | null | undefined) => {
+  const status = task?.status
+  return status === 'running' || status === 'pending'
+}
+
+const getTaskByKind = (kind: TaskKind) => (kind === 'register' ? registerTask.value : loginTask.value)
+
+const markTaskCleared = (kind: TaskKind, task: RegisterTask | LoginTask) => {
+  const key = TASK_KEYS[kind].clearedKey
+  writeClearedTaskMeta(key, {
+    id: task.id,
+    created_at: task.created_at,
+  })
+}
+
+const setLogClearMarker = (kind: TaskKind, marker: TaskLogLine | null) => {
+  if (kind === 'register') {
+    registerLogClearMarker.value = marker
+  } else {
+    loginLogClearMarker.value = marker
+  }
+}
+
+const clearTaskSnapshot = (kind: TaskKind, persist = true) => {
+  if (kind === 'register') {
+    syncRegisterTask(null, persist)
+  } else {
+    syncLoginTask(null, persist)
+  }
+}
+
+const clearFinishedTask = (kind: TaskKind) => {
+  const task = getTaskByKind(kind)
+  if (!task || isTaskActive(task)) return
+  markTaskCleared(kind, task)
+  clearTaskSnapshot(kind, true)
+}
+
+const handleTaskIdle = (kind: TaskKind) => {
+  // 后端 idle：保留现有任务快照
+  cleanupCancelledTasks()
+}
+
+const handleTaskNotFound = (kind: TaskKind) => {
+  if (kind === 'register') {
+    clearRegisterTimer()
+    isRegistering.value = false
+  } else {
+    clearLoginTimer()
+    isRefreshing.value = false
+  }
+}
+
+const handleTaskActive = (kind: TaskKind, task: RegisterTask | LoginTask) => {
+  if (kind === 'register') {
+    syncRegisterTask(task)
+    isRegistering.value = true
+    startRegisterPolling(task.id)
+  } else {
+    syncLoginTask(task)
+    isRefreshing.value = true
+    startLoginPolling(task.id)
+  }
+}
+
+const handleTaskInactive = (kind: TaskKind, task: RegisterTask | LoginTask) => {
+  if (kind === 'register') {
+    syncRegisterTask(task)
+  } else {
+    syncLoginTask(task)
+  }
+}
+
+const shouldKeepInactiveTask = (kind: TaskKind, task: RegisterTask | LoginTask) => {
+  const dismissedMeta = readDismissedTaskMeta(TASK_KEYS[kind].dismissKey)
+  const clearedMeta = readClearedTaskMeta(TASK_KEYS[kind].clearedKey)
+  return !isTaskDismissed(task, dismissedMeta) && !isTaskMetaMatch(task, clearedMeta)
+}
+
+const loadCurrentTaskByKind = async (kind: TaskKind) => {
+  try {
+    const current = kind === 'register'
+      ? await accountsApi.getRegisterCurrent()
+      : await accountsApi.getLoginCurrent()
+    if (current && 'id' in current) {
+      const isActive = current.status === 'running' || current.status === 'pending'
+      if (isActive) {
+        handleTaskActive(kind, current)
+      } else if (shouldKeepInactiveTask(kind, current)) {
+        handleTaskInactive(kind, current)
+      }
+    } else {
+      handleTaskIdle(kind)
+    }
+  } catch (error: any) {
+    if (error?.status === 404 || error?.message === 'Not found') {
+      handleTaskNotFound(kind)
+    } else {
+      automationError.value = error.message || (kind === 'register' ? '加载注册任务失败' : '加载刷新任务失败')
+    }
   }
 }
 
@@ -1403,9 +1570,12 @@ const syncRegisterTask = (task: RegisterTask | null, persist = true) => {
   registerTask.value = task
   if (task.id && task.id !== lastRegisterTaskId.value) {
     lastRegisterTaskId.value = task.id
-    writeDismissedTaskId(REGISTER_DISMISS_KEY, null)
-    registerLogClearMarker.value = null
+    writeDismissedTaskMeta(REGISTER_DISMISS_KEY, null)
+    writeClearedTaskMeta(REGISTER_CLEARED_KEY, null)
+    setLogClearMarker('register', null)
     writeClearMarker(REGISTER_CLEAR_KEY, null)
+    // 新注册任务启动时，自动清理已结束的刷新任务，避免堆叠显示
+    clearFinishedTask('login')
   }
   if (persist) {
     writeCachedTask(REGISTER_TASK_CACHE_KEY, task)
@@ -1427,9 +1597,12 @@ const syncLoginTask = (task: LoginTask | null, persist = true) => {
   loginTask.value = task
   if (task.id && task.id !== lastLoginTaskId.value) {
     lastLoginTaskId.value = task.id
-    writeDismissedTaskId(LOGIN_DISMISS_KEY, null)
-    loginLogClearMarker.value = null
+    writeDismissedTaskMeta(LOGIN_DISMISS_KEY, null)
+    writeClearedTaskMeta(LOGIN_CLEARED_KEY, null)
+    setLogClearMarker('login', null)
     writeClearMarker(LOGIN_CLEAR_KEY, null)
+    // 新刷新任务启动时，自动清理已结束的注册任务，避免堆叠显示
+    clearFinishedTask('register')
   }
   if (persist) {
     writeCachedTask(LOGIN_TASK_CACHE_KEY, task)
@@ -1441,16 +1614,18 @@ const hydrateTaskCache = () => {
   loginLogClearMarker.value = readClearMarker(LOGIN_CLEAR_KEY)
   const cachedRegister = readCachedTask<RegisterTask>(REGISTER_TASK_CACHE_KEY)
   if (cachedRegister) {
-    const dismissedId = readDismissedTaskId(REGISTER_DISMISS_KEY)
-    if (!dismissedId || cachedRegister.id !== dismissedId) {
+    const dismissedMeta = readDismissedTaskMeta(TASK_KEYS.register.dismissKey)
+    const clearedMeta = readClearedTaskMeta(TASK_KEYS.register.clearedKey)
+    if (!isTaskDismissed(cachedRegister, dismissedMeta) && !isTaskMetaMatch(cachedRegister, clearedMeta)) {
       registerTask.value = cachedRegister
       lastRegisterTaskId.value = cachedRegister.id || null
     }
   }
   const cachedLogin = readCachedTask<LoginTask>(LOGIN_TASK_CACHE_KEY)
   if (cachedLogin) {
-    const dismissedId = readDismissedTaskId(LOGIN_DISMISS_KEY)
-    if (!dismissedId || cachedLogin.id !== dismissedId) {
+    const dismissedMeta = readDismissedTaskMeta(TASK_KEYS.login.dismissKey)
+    const clearedMeta = readClearedTaskMeta(TASK_KEYS.login.clearedKey)
+    if (!isTaskDismissed(cachedLogin, dismissedMeta) && !isTaskMetaMatch(cachedLogin, clearedMeta)) {
       loginTask.value = cachedLogin
       lastLoginTaskId.value = cachedLogin.id || null
     }
@@ -1846,7 +2021,20 @@ const fetchTaskHistory = async () => {
     })
     if (!response.ok) throw new Error('获取历史记录失败')
     const data = await response.json()
-    taskHistory.value = data.history || []
+    const history = Array.isArray(data.history) ? data.history : []
+    const dismissedRegister = readDismissedTaskMeta(REGISTER_DISMISS_KEY)
+    const dismissedLogin = readDismissedTaskMeta(LOGIN_DISMISS_KEY)
+    taskHistory.value = history.filter((record: any) => {
+      const meta = record?.type === 'register' ? dismissedRegister : dismissedLogin
+      if (!meta) return true
+      const id = typeof record?.id === 'string' ? record.id : String(record?.id || '')
+      const createdAt = typeof record?.created_at === 'number' ? record.created_at : undefined
+      if (meta.id && id && id === meta.id) return false
+      if (typeof meta.created_at === 'number' && typeof createdAt === 'number' && createdAt === meta.created_at) {
+        return false
+      }
+      return true
+    })
   } catch (error: any) {
     toast.error(error?.message || '获取历史记录失败')
   } finally {
@@ -1933,29 +2121,33 @@ const saveScheduledConfig = async () => {
   }
 }
 
-const clearTaskLogs = () => {
-  const isRegisterActive = registerTask.value?.status === 'running' || registerTask.value?.status === 'pending'
-  const isLoginActive = loginTask.value?.status === 'running' || loginTask.value?.status === 'pending'
-
-  if (!isRegisterActive) {
-    writeDismissedTaskId(REGISTER_DISMISS_KEY, registerTask.value?.id || null)
-    syncRegisterTask(null, true)
-  } else {
-    const regLogs = (registerTask.value?.logs || []) as TaskLogLine[]
-    registerLogClearMarker.value = regLogs.length ? regLogs[regLogs.length - 1] : null
-    writeClearMarker(REGISTER_CLEAR_KEY, registerLogClearMarker.value)
+const clearTaskLogs = async () => {
+  const confirmed = await confirmDialog.ask({
+    title: '清空当前日志',
+    message: '确定要清空当前任务日志吗？',
+    confirmText: '清空',
+  })
+  if (!confirmed) return
+  const clearLogsFor = (kind: TaskKind) => {
+    const task = getTaskByKind(kind)
+    if (!task) return
+    if (!isTaskActive(task)) {
+      markTaskCleared(kind, task)
+      clearTaskSnapshot(kind, true)
+      return
+    }
+    const logs = (task.logs || []) as TaskLogLine[]
+    if (!logs.length) return
+    const marker = logs[logs.length - 1]
+    setLogClearMarker(kind, marker)
+    writeClearMarker(TASK_KEYS[kind].clearKey, marker)
   }
 
-  if (!isLoginActive) {
-    writeDismissedTaskId(LOGIN_DISMISS_KEY, loginTask.value?.id || null)
-    syncLoginTask(null, true)
-  } else {
-    const loginLogsRaw = (loginTask.value?.logs || []) as TaskLogLine[]
-    loginLogClearMarker.value = loginLogsRaw.length ? loginLogsRaw[loginLogsRaw.length - 1] : null
-    writeClearMarker(LOGIN_CLEAR_KEY, loginLogClearMarker.value)
-  }
+  clearLogsFor('register')
+  clearLogsFor('login')
 
   automationError.value = ''
+  toast.success('当前日志已清空')
 }
 
 const filterLogsAfterMarker = (logs: TaskLogLine[], marker: TaskLogLine | null) => {
@@ -2051,6 +2243,24 @@ const isTaskRunning = computed(() => {
     loginStatus === 'pending'
 })
 
+const taskProgressText = computed(() => {
+  const register = registerTask.value
+  const login = loginTask.value
+  const registerActive = register?.status === 'running' || register?.status === 'pending'
+  const loginActive = login?.status === 'running' || login?.status === 'pending'
+
+  if (registerActive && loginActive) {
+    return `注册 ${register.progress}/${register.count} | 刷新 ${login.progress}/${login.account_ids.length}`
+  }
+  if (registerActive) {
+    return `注册 ${register.progress}/${register.count}`
+  }
+  if (loginActive) {
+    return `刷新 ${login.progress}/${login.account_ids.length}`
+  }
+  return ''
+})
+
 onBeforeUnmount(() => {
   clearRegisterTimer()
   clearLoginTimer()
@@ -2059,11 +2269,12 @@ onBeforeUnmount(() => {
 })
 
 const statusLabel = (account: AdminAccount) => {
+  // 检查是否正在刷新
+  if (refreshingAccountIds.value.has(account.id)) {
+    return '刷新中'
+  }
   if (account.cooldown_reason?.includes('429') && account.cooldown_seconds > 0) {
     return '429限流'
-  }
-  if (account.cooldown_reason === '错误禁用') {
-    return '错误禁用'
   }
   if (account.disabled) {
     return '手动禁用'
@@ -2079,10 +2290,13 @@ const statusLabel = (account: AdminAccount) => {
 
 const statusClass = (account: AdminAccount) => {
   const status = statusLabel(account)
+  if (status === '刷新中') {
+    return 'bg-sky-500 text-white'
+  }
   if (status === '429限流' || status === '即将过期') {
     return 'bg-amber-200 text-amber-900'
   }
-  if (status === '错误禁用' || status === '已过期') {
+  if (status === '已过期') {
     return 'bg-destructive/10 text-destructive'
   }
   if (status === '手动禁用') {
@@ -2095,7 +2309,7 @@ const shouldShowEnable = (account: AdminAccount) => {
   if (account.cooldown_reason?.includes('429') && account.cooldown_seconds > 0) {
     return true
   }
-  return account.disabled || account.cooldown_reason === '错误禁用'
+  return account.disabled
 }
 
 const displayRemaining = (value: string) => {
@@ -2118,9 +2332,31 @@ const formatCooldown = (seconds: number) => {
 }
 
 const cooldownClass = (account: AdminAccount) => {
-  if (account.cooldown_seconds > 0) return 'text-amber-700'
-  if (account.cooldown_reason === '错误禁用') return 'text-rose-600'
-  return 'text-muted-foreground'
+  // 配额冷却：黄色（警告）
+  if (account.cooldown_seconds > 0) {
+    return 'text-yellow-600'
+  }
+  // 手动禁用：灰色
+  if (account.disabled) {
+    return 'text-muted-foreground'
+  }
+  // 正常：绿色
+  return 'text-emerald-600'
+}
+
+const cooldownDisplay = (account: AdminAccount) => {
+  // 有冷却时间：显示倒计时 + 原因
+  if (account.cooldown_seconds > 0) {
+    return `${formatCooldown(account.cooldown_seconds)} · ${account.cooldown_reason || '冷却中'}`
+  }
+
+  // 手动禁用
+  if (account.disabled) {
+    return 'disabled'
+  }
+
+  // 正常可用
+  return 'normal'
 }
 
 const rowClass = (account: AdminAccount) => {
@@ -2572,11 +2808,20 @@ const updateLoginTask = async (taskId: string) => {
     if (error?.status === 404 || error?.message === 'Not found') {
       clearLoginTimer()
       isRefreshing.value = false
+      refreshingAccountIds.value = new Set()  // 清空刷新状态
       return
     }
     throw error
   }
   syncLoginTask(task)
+
+  // 更新正在刷新的账户列表
+  if (task.status === 'running' || task.status === 'pending') {
+    refreshingAccountIds.value = new Set(task.account_ids || [])
+  } else {
+    refreshingAccountIds.value = new Set()  // 任务完成，清空刷新状态
+  }
+
   if (task.status !== 'running' && task.status !== 'pending') {
     isRefreshing.value = false
     clearLoginTimer()
@@ -2641,57 +2886,8 @@ const startBackgroundTaskPolling = () => {
 }
 
 const loadCurrentTasks = async () => {
-  try {
-    const registerCurrent = await accountsApi.getRegisterCurrent()
-    if (registerCurrent && 'id' in registerCurrent) {
-      const isActive = registerCurrent.status === 'running' || registerCurrent.status === 'pending'
-      const dismissedId = readDismissedTaskId(REGISTER_DISMISS_KEY)
-      if (isActive) {
-        syncRegisterTask(registerCurrent)
-        isRegistering.value = true
-        startRegisterPolling(registerCurrent.id)
-      } else if (!dismissedId || registerCurrent.id !== dismissedId) {
-        syncRegisterTask(registerCurrent)
-      }
-    } else {
-      // 后端 idle：保留现有任务快照
-      cleanupCancelledTasks()
-    }
-  } catch (error: any) {
-    // 部分后端实现可能在无任务时返回 404：视为 idle，不提示 "Not found"
-    if (error?.status === 404 || error?.message === 'Not found') {
-      isRegistering.value = false
-      clearRegisterTimer()
-    } else {
-      automationError.value = error.message || '加载注册任务失败'
-    }
-  }
-
-  try {
-    const loginCurrent = await accountsApi.getLoginCurrent()
-    if (loginCurrent && 'id' in loginCurrent) {
-      const isActive = loginCurrent.status === 'running' || loginCurrent.status === 'pending'
-      const dismissedId = readDismissedTaskId(LOGIN_DISMISS_KEY)
-      if (isActive) {
-        syncLoginTask(loginCurrent)
-        isRefreshing.value = true
-        startLoginPolling(loginCurrent.id)
-      } else if (!dismissedId || loginCurrent.id !== dismissedId) {
-        syncLoginTask(loginCurrent)
-      }
-    } else {
-      // 后端 idle：保留现有任务快照
-      cleanupCancelledTasks()
-    }
-  } catch (error: any) {
-    // 部分后端实现可能在无任务时返回 404：视为 idle，不提示 "Not found"
-    if (error?.status === 404 || error?.message === 'Not found') {
-      isRefreshing.value = false
-      clearLoginTimer()
-    } else {
-      automationError.value = error.message || '加载刷新任务失败'
-    }
-  }
+  await loadCurrentTaskByKind('register')
+  await loadCurrentTaskByKind('login')
 }
 
 const handleRegister = async () => {
@@ -2712,20 +2908,29 @@ const handleRegister = async () => {
   }
 }
 
-const handleRefreshSelected = async () => {
-  if (!selectedIds.value.size) return
+// 统一的刷新函数 - 所有刷新入口都调用这个
+const startRefresh = async (accountIds: string[]) => {
+  if (!accountIds.length) return
   automationError.value = ''
   isRefreshing.value = true
   try {
-    const task = await accountsApi.startLogin(Array.from(selectedIds.value))
+    const task = await accountsApi.startLogin(accountIds)
     syncLoginTask(task)
+    // 更新正在刷新的账户列表
+    refreshingAccountIds.value = new Set(task.account_ids || [])
     startLoginPolling(task.id)
     // 自动打开任务状态弹窗
     openTaskModal()
   } catch (error: any) {
     automationError.value = error.message || '启动刷新失败'
+    toast.error(error.message || '启动刷新失败')
     isRefreshing.value = false
   }
+}
+
+const handleRefreshSelected = async () => {
+  if (!selectedIds.value.size) return
+  await startRefresh(Array.from(selectedIds.value))
 }
 
 const handleRefreshExpiring = async () => {
@@ -2735,6 +2940,8 @@ const handleRefreshExpiring = async () => {
     const taskOrIdle = await accountsApi.checkLogin()
     if (taskOrIdle && 'id' in taskOrIdle) {
       syncLoginTask(taskOrIdle)
+      // 更新正在刷新的账户列表
+      refreshingAccountIds.value = new Set(taskOrIdle.account_ids || [])
       startLoginPolling(taskOrIdle.id)
       // 自动打开任务状态弹窗
       openTaskModal()
@@ -2744,6 +2951,8 @@ const handleRefreshExpiring = async () => {
     const current = await accountsApi.getLoginCurrent()
     if (current && 'id' in current) {
       syncLoginTask(current)
+      // 更新正在刷新的账户列表
+      refreshingAccountIds.value = new Set(current.account_ids || [])
       startLoginPolling(current.id)
       openTaskModal()
       return
@@ -2751,6 +2960,7 @@ const handleRefreshExpiring = async () => {
     isRefreshing.value = false
   } catch (error: any) {
     automationError.value = error.message || '触发刷新失败'
+    toast.error(error.message || '触发刷新失败')
     isRefreshing.value = false
   }
 }
