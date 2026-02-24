@@ -60,13 +60,26 @@ def get_conversation_key(messages: List[dict], client_identifier: str = "") -> s
     return hashlib.md5(conversation_prefix.encode()).hexdigest()
 
 
+def strip_base64_from_text(text: str) -> str:
+    """
+    移除文本中的 base64 数据 URI 和 markdown 图片引用
+    将 ![image](data:image/...;base64,...) 替换为 [图片]
+    将裸 data:mime;base64,... 替换为 [图片]
+    """
+    # 替换 markdown 图片语法中的 base64: ![...](data:...;base64,...)
+    text = re.sub(r'!\[[^\]]*\]\(data:[^;]+;base64,[A-Za-z0-9+/=\s]+\)', '[图片]', text)
+    # 替换裸 data URI: data:mime/type;base64,...
+    text = re.sub(r'data:[^;]+;base64,[A-Za-z0-9+/=\s]{100,}', '[图片]', text)
+    return text
+
+
 def extract_text_from_content(content) -> str:
     """
     从消息 content 中提取文本内容
     统一处理字符串和多模态数组格式
     """
     if isinstance(content, str):
-        return content
+        return strip_base64_from_text(content)
     elif isinstance(content, list):
         # 多模态消息：只提取文本部分
         return "".join([x.get("text", "") for x in content if x.get("type") == "text"])

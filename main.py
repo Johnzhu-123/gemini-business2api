@@ -2184,6 +2184,14 @@ async def chat_impl(
                 else:
                     account_manager.handle_non_http_error("聊天请求", request_id, quota_type)
 
+                # 400 错误（如 PROMPT_TOO_LARGE）是请求本身的问题，切换账户无法解决，直接终止
+                if is_http_exception and status_code == 400:
+                    logger.error(f"[CHAT] [req_{request_id}] 请求参数错误 (400)，跳过重试: {error_detail}")
+                    status = classify_error_status(status_code, e)
+                    await finalize_result(status, status_code, error_detail)
+                    if req.stream: yield f"data: {json.dumps({'error': {'message': error_detail}})}\n\n"
+                    return
+
                 # 检查是否还能继续重试
                 if retry_idx < max_retries - 1:
                     logger.warning(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] 切换账户重试 ({retry_idx + 1}/{max_retries})")
