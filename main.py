@@ -347,7 +347,7 @@ logger.addHandler(memory_handler)
 
 # ---------- 配置管理（使用统一配置系统）----------
 # 所有配置通过 config_manager 访问，优先级：环境变量 > YAML > 默认值
-TIMEOUT_SECONDS = 300
+TIMEOUT_SECONDS = 120
 API_KEY = config.basic.api_key
 ADMIN_KEY = config.security.admin_key
 _proxy_auth, _no_proxy_auth = parse_proxy_setting(config.basic.proxy_for_auth)
@@ -2189,6 +2189,8 @@ async def chat_impl(
                     logger.error(f"[CHAT] [req_{request_id}] 请求参数错误 (400)，跳过重试: {error_detail}")
                     status = classify_error_status(status_code, e)
                     await finalize_result(status, status_code, error_detail)
+                    # 清理脏会话缓存，强制下次请求创建新 Session
+                    multi_account_mgr.global_session_cache.pop(conv_key, None)
                     if req.stream: yield f"data: {json.dumps({'error': {'message': error_detail}})}\n\n"
                     return
 
@@ -2228,6 +2230,8 @@ async def chat_impl(
 
                         status = classify_error_status(status_code, create_err)
                         await finalize_result(status, status_code, f"Account Failover Failed: {str(create_err)[:200]}")
+                        # 清理脏会话缓存，强制下次请求创建新 Session
+                        multi_account_mgr.global_session_cache.pop(conv_key, None)
                         if req.stream: yield f"data: {json.dumps({'error': {'message': 'Account Failover Failed'}})}\n\n"
                         return
                 else:
@@ -2235,6 +2239,8 @@ async def chat_impl(
                     logger.error(f"[CHAT] [req_{request_id}] 已达到最大重试次数 ({max_retries})，请求失败")
                     status = classify_error_status(status_code, e)
                     await finalize_result(status, status_code, error_detail)
+                    # 清理脏会话缓存，强制下次请求创建新 Session
+                    multi_account_mgr.global_session_cache.pop(conv_key, None)
                     if req.stream: yield f"data: {json.dumps({'error': {'message': f'Max retries ({max_retries}) exceeded: {error_detail}'}})}\n\n"
                     return
 
@@ -2471,7 +2477,7 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
         "https://biz-discoveryengine.googleapis.com/v1alpha/locations/global/widgetStreamAssist",
         headers=headers,
         json=body,
-        timeout=300.0,
+        timeout=120.0,
     ) as r:
         if r.status_code != 200:
             error_text = await r.aread()
