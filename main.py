@@ -443,7 +443,7 @@ http_client = httpx.AsyncClient(
     proxy=(PROXY_FOR_CHAT or None),
     verify=False,
     http2=False,
-    timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=60.0),
+    timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=15.0),
     limits=httpx.Limits(
         max_keepalive_connections=100,
         max_connections=200
@@ -455,7 +455,7 @@ http_client_chat = httpx.AsyncClient(
     proxy=(PROXY_FOR_CHAT or None),
     verify=False,
     http2=False,
-    timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=60.0),
+    timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=15.0),
     limits=httpx.Limits(
         max_keepalive_connections=100,
         max_connections=200
@@ -467,7 +467,7 @@ http_client_auth = httpx.AsyncClient(
     proxy=(PROXY_FOR_AUTH or None),
     verify=False,
     http2=False,
-    timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=60.0),
+    timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=15.0),
     limits=httpx.Limits(
         max_keepalive_connections=100,
         max_connections=200
